@@ -1,0 +1,86 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Findable • Live Map Scan</title>
+    <style>
+      body { font-family: system-ui, Arial, sans-serif; margin:20px; max-width:720px }
+      .row { display:flex; gap:12px; flex-wrap:wrap }
+      input, select, button { padding:10px; font-size:16px }
+      .grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; margin-top:14px }
+      .cell { padding:6px; text-align:center; border:1px solid #eee }
+      .muted { opacity:.7; font-size:14px }
+      .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #ddd; margin-right:6px }
+    </style>
+  </head>
+  <body>
+    <h2>Findable — Live Map Scan</h2>
+    <div class="row">
+      <input id="biz" placeholder="Business label" style="flex:1" />
+      <input id="placeId" placeholder="Google Place ID (preferred)" style="flex:1" />
+    </div>
+    <div class="row" style="margin-top:10px">
+      <input id="lat" placeholder="Latitude" style="width:150px" />
+      <input id="lng" placeholder="Longitude" style="width:150px" />
+      <input id="kw" placeholder="Keyword (e.g., plumber miami)" style="flex:1" />
+    </div>
+    <div class="row" style="margin-top:10px">
+      <select id="grid">
+        <option value="7">7×7 grid</option><option value="9">9×9 grid</option>
+      </select>
+      <select id="radius">
+        <option value="2">2 km radius</option><option value="3">3 km radius</option>
+      </select>
+      <button id="run">Run Scan</button>
+    </div>
+    <p class="muted">Tip: Place ID is best. Use lat/lng only if needed.</p>
+    <div id="status"></div>
+    <div id="report"></div>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      $("run").onclick = async () => {
+        $("status").textContent = "Starting scan…";
+        $("report").innerHTML = "";
+        const payload = {
+          placeId: $("placeId").value || null,
+          lat: $("lat").value ? parseFloat($("lat").value) : null,
+          lng: $("lng").value ? parseFloat($("lng").value) : null,
+          keyword: $("kw").value,
+          gridSize: parseInt($("grid").value),
+          radius: parseFloat($("radius").value),
+          name: $("biz").value
+        };
+        const start = await fetch("/api/lf-scan", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify(payload) }).then(r=>r.json());
+        if (!start.jobId) { $("status").textContent = start.error || "Failed to start."; return; }
+        let tries = 0;
+        const poll = setInterval(async () => {
+          tries++;
+          $("status").textContent = `Running… (check ${tries})`;
+          const s = await fetch(`/api/lf-status?jobId=${encodeURIComponent(start.jobId)}`).then(r=>r.json());
+          if (s.error) { clearInterval(poll); $("status").textContent = s.error; return; }
+          if (s.done) {
+            clearInterval(poll);
+            $("status").innerHTML = `<span class="pill">Done</span> Scan ID: ${s.scanId}`;
+            render(s.result);
+          }
+        }, 4000);
+      };
+
+      function render(result) {
+        const avg = result?.average_rank_position ?? result?.metrics?.average_rank_position ?? "—";
+        const solv = result?.solv ?? result?.metrics?.solv ?? "—";
+        const share = result?.public_share_url ? ` <a href="${result.public_share_url}" target="_blank">Share (white‑label)</a>` : "";
+        let html = `<p><strong>Average Rank:</strong> ${avg} &nbsp; <strong>SoLV:</strong> ${solv}${share}</p>`;
+
+        if (Array.isArray(result?.grid)) {
+          html += `<div class="grid">` + result.grid.map(v => `<div class="cell">${v}</div>`).join("") + `</div>`;
+        } else {
+          html += `<pre style="white-space:pre-wrap">${JSON.stringify(result, null, 2)}</pre>`;
+        }
+        document.getElementById("report").innerHTML = html;
+      }
+    </script>
+  </body>
+</html>
